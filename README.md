@@ -60,20 +60,19 @@ DIY Home Security Solution with Tensorflow Lite and OpenCV
 <!-- ABOUT THE PROJECT -->
 ## About The Project
 
-[![Product Name Screen Shot][product-screenshot]](https://jjhickman.com/iot-home)
+[![Product Name Screen Shot][product-screenshot]](https://jjhickman.com/panoptix)
 
-Words words words
+This is a DIY home security solution meant to empower the average person to keep their property secure and safe without relying on same shady corporation or third-party software just to know when there is an intruder in your own home. No more. While this is a mono-repo designed with a system consisting of a separate Hub and sensing devices (e.g. cameras), it is possible to run all of the repository applications from the same host provided the configuration is appropriate for the available hardware interfaces (e.g. camera is detectable/usable). This system is designed with Linux SBCs and low-power computers in mind, however the only specialized hardware the project requires is an optional feature to accelerate machine learning tasks. The system is tested with a [Google Coral USB Accelerator](https://coral.ai/products/accelerator/) as the hardware designed for such tasks dispatched to the Interpreter service in the designated Hub device. Eventually, a mobile client will be developed to manage the hub and connected devices.
 
-### Built With
+### Technology Stack
 This system consists of multiple software components and devices. As such the requirements listed will be respective to each component:
 
-#### IoT Hub
-* [Raspberry Pi Cluster](https://www.raspberrypi.org/)
+#### Hub Device
+* [Raspberry Pi](https://www.raspberrypi.org/)
 * [Ubuntu](https://ubuntu.com/)
-* [Kubernetes / K3S](https://k3s.io/)
+* [Docker](https://docker.io/)
 * [NGINX](https://www.nginx.com/)
-* [Cert-Manager](https://github.com/jetstack/cert-manager)
-* [Metal LB](https://metallb.universe.tf/)
+* [RabbitMQ](https://www.nginx.com/)
 
 ##### Interpreter Service
 * [Tensorflow / Tensorflow Lite](https://www.tensorflow.org/lite)
@@ -91,29 +90,24 @@ This system consists of multiple software components and devices. As such the re
 * [Node.js](https://nodejs.org/en/)
 * [Amazon Web Services - SNS](https://aws.amazon.com/sns/)
 
-##### Upload Service
-* [JavaScript](https://www.javascript.com/)
-* [Node.js](https://nodejs.org/en/)
-* [Amazon Web Services - S3](https://aws.amazon.com/s3/)
-
 #### Motion Detection Security Camera
 * [Python](https://www.python.org/)
-* [Amazon Web Services - SNS](https://aws.amazon.com/sns/)
+* [OpenCV](https://opencv.org/)
+* [Docker](https://docker.io/)
 
-#### Voice Assistant
-* [Python](https://www.python.org/)
+#### Mobile Client
+* TBD
 
 <!-- GETTING STARTED -->
 ## Getting Started
 
-This is how to setup the project locally. For the cluster, there is a Kubernetes configuration under the iot-hub directory.
-To get a local copy up and running follow these simple example steps.
+This is how to setup the project locally. For ease of deployment, the use of ```docker-compose``` is recommended as the hub consists of several microservices communicating via ```RabbitMQ```
 
 ### Installation
 
 1. Clone the repo
 ```sh
-git clone https://github.com/jjhickman/iot-home.git
+git clone https://github.com/jjhickman/panoptix.git
 ```
 
 
