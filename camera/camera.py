@@ -1,29 +1,24 @@
 import time
-import sys
-import os
-import ssl
-from variables import Variables
+import argparse
 import socket
 import asyncio
+from aiohttp.payload_streamer import StreamWrapperPayload
 import socketio
 import cv2
 import base64
-import datetime
-import functools
 import logging
-import pathlib
-import json
-from skimage.measure import compare_ssim
-from async_timeout import timeout
+import multiprocessing
+from detector import Detector
+import requests
 import aiohttp
 from aiohttp import web
-from middleware import setup_middlewares
 
-awake_time = -1
 stream_url = ''
 sio = socketio.AsyncServer()
 logger = None
 static_back = None
+detector = []
+frame_queue = multiprocessing.Queue(1)
 
 """
 =============================================================================
@@ -53,78 +48,47 @@ async def index(request):
     logger.debug('Request for stream: {}\n\nSending: {}'.format(request, index_html))
     return web.Response(text=index_html, content_type='text/html')
 
-def motion_found(threshold, frame):
-    global static_back
-    motion = False
-
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (21, 21), 0) 
-    if static_back is None: 
-        static_back = gray 
-        return motion
-    (score, diff) = compare_ssim(static_back, gray, full=True)
-    diff = (diff * 255).astype("uint8")
-    thresh = cv2.threshold(diff, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
-    #diff_frame = cv2.absdiff(static_back, gray)
-    #thresh_frame = cv2.threshold(diff_frame, threshold, 255, cv2.THRESH_BINARY)[1] 
-    #thresh_frame = cv2.dilate(thresh_frame, None, iterations = 2) 
-    #cnts, _ = cv2.findContours(thresh_frame.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE) 
-    cnts, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    for contour in cnts: 
-        if cv2.contourArea(contour) >= 5000:
-            logger.debug("BIG AREA OF CHANGE: " + str(cv2.contourArea(contour)))
-            motion = True
-            (x, y, w, h) = cv2.boundingRect(contour)
-    if motion == True:
-        logger.debug("Motion detected")
-    return motion
-
+def detect(config, q, url, logger):
+    detector = Detector(bg_history=10,
+      bg_skip_frames=1,
+      movement_frames_history=2,
+      brightness_discard_level=5,
+      bg_subs_scale_percent=0.2,
+      pixel_compression_ratio=0.1,
+      group_boxes=True,
+      expansion_step=5)
+    awake_time = time.time()
+    while True:
+        frame = q.get()
+        if frame is None:
+            continue
+        boxes, f = detector.detect(frame)
+        if len(boxes) > 0 and time.time() >= awake_time:
+            response = requests.post(url, data={'source': stream_url, 'time': round(time.time() * 1000)}, timeout=500)
+            if response.status_code == 200:
+                logger.debug('Successfully notified hub!')
+            else:
+                logger.debug(response.text)
 
 """
 =============================================================================
     SocketIO camera capture async loop for web stream and for GPIO input
 =============================================================================
 """
-async def stream(app):
-    global logger, stream_url, awake_time
-    refresh_seconds = 1.0 / int(app['config'].stream_fps)
+async def stream(app, q):
+    global logger, stream_url, frame_queue
+    refresh_seconds = 1.0 / 20
     logger.debug('Updating stream every {} seconds'.format(refresh_seconds))
     try:
         while True:
             ret, frame = app['capture'].read()
+            frame_queue.put(frame)
             if ret == False:
                 logger.error("FAILED READING FROM CAPTURE")
                 break
             ret, jpg_image = cv2.imencode('.jpg', frame)
             base64_image = base64.b64encode(jpg_image)
             await app['socket'].emit('image', base64_image)
-
-            awake = time.time() >= awake_time
-            if awake and motion_found(int(app['config'].threshold), frame):
-                try:
-                    async with timeout(5):
-                        async with aiohttp.ClientSession() as session:
-                            try:
-                                async with session.post(app['config'].hub_url, auth=aiohttp.BasicAuth(app['config'].hub_username, app['config'].hub_password,'utf-8'), json={'source': stream_url, 'time': round(time.time() * 1000)}) as response:
-                                    status = await response.status()
-                                    data = await response.json()
-                                    if status != 200:
-                                        logger.error("Status: " + str(status) + " - sleeping for default 60 seconds...")
-                                        awake_time = time.time() + 60
-                                    else:
-                                        if data['sleep_seconds'] and int(data['sleep_seconds']) > 0:
-                                            awake_time = time.time() + int(data['sleep_seconds'])
-                                            logger.info("Sleeping for " + str(data['sleep_seconds']) + " seconds...")
-                                        else:
-                                            awake_time = time.time() +  60
-                                            logger.error("No sleep_seconds field in JSON response. Sleeping for default 60 seconds...")
-                            except aiohttp.ClientError as e:
-                                await asyncio.sleep(refresh_seconds)
-                                logger.error("HTTP Client POST error: " + str(e))
-                                awake_time = time.time() + 60
-                except asyncio.TimeoutError:
-                    await asyncio.sleep(refresh_seconds)
-                    logger.debug("Timed out trying to make request to hub")
             await asyncio.sleep(refresh_seconds)
         logger.debug('Ended stream!')
     except asyncio.CancelledError:
@@ -157,7 +121,13 @@ def disconnect(sid):
 def initialize():
     global sio, stream_url, logger
 
-    args = Variables()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--endpoint', '-e', type=str, default='192.168.50.200')
+    parser.add_argument('--username', '-u', type=str, default='username')
+    parser.add_argument('--password', '-p', type=str, default='password')
+    parser.add_argument('--cooldown', '-c', type=int, default=15)
+    parser.add_argument('--threshold', '-t', type=float, default=0.1)
+    args = parser.parse_args()
 
     log_formatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
     logger = logging.getLogger('aiohttp.server')
@@ -168,26 +138,32 @@ def initialize():
 
     app = web.Application()
     app['config'] = args
-    
-    stream_url = 'http://{}:{}'.format(app['config'].address, app['config'].stream_port)
-
+    print(socket.gethostbyname(socket.gethostname()))
+    stream_url = 'http://{}:{}'.format(socket.gethostbyname(socket.gethostname()), 8888)
+    print('Streaming from {}'.format(stream_url))
     sio.attach(app)
     app['socket'] = sio
 
+
     app.router.add_get('/', index)
-    setup_middlewares(app)
     app.on_startup.append(start_tasks)
     app.on_cleanup.append(cleanup_tasks)
-    return app, app['config'].address
+    return app, socket.gethostbyname(socket.gethostname())
+    #return app, app['config'].address
+
 
 async def start_tasks(app):
     app['capture'] = cv2.VideoCapture(0)
-    app['stream'] = app.loop.create_task(stream(app))
+    app['stream'] = app.loop.create_task(stream(app, frame_queue))
 
 async def cleanup_tasks(app):
     app['capture'].release()
     cv2.destroyAllWindows()
 
 if __name__ == '__main__':
+
     app, address = initialize()
-    web.run_app(app, host="0.0.0.0", port=app['config'].stream_port)
+    worker = multiprocessing.Process(target=detect, args=(app['config'], frame_queue, stream_url, logger))
+    worker.start()
+
+    web.run_app(app, host=socket.gethostbyname(socket.gethostname()), port=8888)
