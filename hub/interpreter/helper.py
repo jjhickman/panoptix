@@ -1,4 +1,5 @@
 import cv2
+import pika
 import os
 import json
 import re
@@ -10,6 +11,14 @@ import logging.handlers
 from pycoral.adapters.common import input_size
 from pycoral.utils.dataset import read_label_file
 from pycoral.utils.edgetpu import make_interpreter
+
+def load_rabbitmq(rabbitmq_host, rabbitmq_user, rabbitmq_password):
+    url = 'amqp://'+ rabbitmq_user + ':' + rabbitmq_password + '@' + rabbitmq_host + ':5672/%2F?blocked%5Fconnection%5Ftimeout=300&stack%5Ftimeout=300&socket%5Ftimeout=300&connection%5Fattempts=5'
+    parameters = pika.URLParameters(url)
+    connection = pika.BlockingConnection(parameters)
+    channel = connection.channel()
+    channel.basic_qos(prefetch_count=1) # tell RabbitMQ not to give more than one message at a time
+    return connection, channel
 
 def load_logger(log_level):
     log_formatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")

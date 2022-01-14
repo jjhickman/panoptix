@@ -2,5 +2,5 @@ asyncio
 python-socketio
 async-timeout
 aiohttp
-fastapi
-boto3
+pika
+requests

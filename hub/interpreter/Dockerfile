@@ -1,11 +1,11 @@
-FROM ubuntu:20.04
+FROM jjhickman/opencv-python:headless
 
 WORKDIR /interpreter
 
 RUN mkdir /interpreter/models; \
     mkdir /interpreter/output; \
     apt-get update; \
-    apt-get install -y --no-install-recommends curl gnupg2 ca-certificates python3 python3-pip python3-opencv uvicorn; \
+    apt-get install -y --no-install-recommends curl gnupg2 ca-certificates; \
     update-ca-certificates; \
     echo "deb https://packages.cloud.google.com/apt coral-edgetpu-stable main" | tee /etc/apt/sources.list.d/coral-edgetpu.list; \
     curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add - ; \
@@ -23,4 +23,4 @@ COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 COPY . .
 
-CMD ["python3", "main.py"]
+CMD ["python3", "interpreter.py"]
